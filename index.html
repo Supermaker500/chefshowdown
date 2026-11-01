@@ -2,121 +2,237 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Chef Showdown</title>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
-    /* 1. STILI DELLA LOBBY E DEL MENU */
-    body { font-family: sans-serif; background: #2c3e50; color: #fff; text-align: center; }
-    .card { background: #34495e; padding: 20px; border-radius: 10px; display: inline-block; margin-top: 50px; }
-    input, button { padding: 10px; margin: 5px; border-radius: 5px; border: none; }
-    button { background: #27ae60; color: white; cursor: pointer; font-weight: bold; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #2c3e50;
+      color: #ecf0f1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    .card {
+      background: #34495e;
+      padding: 25px;
+      border-radius: 12px;
+      box-shadow: 0 8px 16px rgba(0,0,0,0.4);
+      text-align: center;
+      max-width: 400px;
+      width: 90%;
+    }
+    h1 { color: #e67e22; margin-top: 0; }
+    input, button {
+      padding: 12px;
+      margin: 10px 0;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    input { background: #1a252f; color: #fff; border: 1px solid #4f6b82; }
+    button {
+      background-color: #27ae60;
+      color: white;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover { background-color: #2ecc71; }
+    .btn-join { background-color: #e67e22; }
+    .btn-join:hover { background-color: #f39c12; }
+    .player-list {
+      text-align: left;
+      background: #1a252f;
+      padding: 12px;
+      border-radius: 6px;
+      margin: 15px 0;
+      max-height: 140px;
+      overflow-y: auto;
+    }
     .hidden { display: none !important; }
-
-    /* 2. INSERISCI QUI ANCHE I TUOI VECCHI STILI CSS DEL GIOCO (SE NE AVEVI) */
   </style>
 </head>
 <body>
 
-  <!-- INTERFACCIA MENU -->
+  <!-- MENU INIZIALE -->
   <div id="menuScreen" class="card">
     <h1>Chef Showdown</h1>
-    <input type="text" id="nicknameInput" placeholder="Il tuo Nickname">
-    <br>
-    <button onclick="createLobby()">Crea Stanza</button>
-    <hr>
-    <input type="text" id="roomCodeInput" placeholder="Codice Stanza">
-    <button onclick="joinLobby()">Entra nella Stanza</button>
+    <input type="text" id="nicknameInput" placeholder="Inserisci il tuo Nickname" maxlength="15">
+    <button onclick="hostGame()">Crea Stanza</button>
+    <hr style="border-color: #4f6b82; margin: 20px 0;">
+    <input type="text" id="roomCodeInput" placeholder="Inserisci Codice Stanza">
+    <button class="btn-join" onclick="joinGame()">Entra nella Stanza</button>
   </div>
 
-  <!-- INTERFACCIA LOBBY -->
+  <!-- LOBBY D'ATTESA -->
   <div id="lobbyScreen" class="card hidden">
-    <h2>Lobby</h2>
-    <p>Codice: <strong id="displayRoomCode">---</strong></p>
-    <p>Link da inviare: <input type="text" id="shareLinkInput" readonly></p>
-    <div id="playerList"></div>
-    <br>
-    <button id="startGameBtn" class="hidden" onclick="startGame()">Avvia Partita</button>
+    <h1>Lobby</h1>
+    <p>Codice Stanza: <strong id="displayCode" style="color:#e67e22; font-size: 20px;">-----</strong></p>
+    <p style="font-size: 13px; color: #bdc3c7;">Link da condividere:</p>
+    <input type="text" id="shareLink" readonly onclick="this.select()">
+    
+    <h3>Giocatori Connessi:</h3>
+    <div id="playerList" class="player-list"></div>
+
+    <button id="startBtn" class="hidden" onclick="startTheGame()">Avvia Partita</button>
+    <p id="waitingMsg" style="font-size: 14px; color: #f1c40f;">In attesa che l'host avvii la partita...</p>
   </div>
 
-  <!-- CANVAS / ELEMENTI DEL TUO GIOCO -->
-  <canvas id="gameCanvas" width="800" height="600" style="display:none;"></canvas>
+  <!-- CANVAS DI GIOCO -->
+  <canvas id="gameCanvas" width="800" height="600" class="hidden" style="border: 3px solid #e67e22; background: #111; border-radius: 8px; max-width: 100%;"></canvas>
 
   <script>
-    // --- GESTIONE PEERJS & LOBBY ---
-    let peer = null, connections = [], isHost = false, roomCode = '', players = [];
+    let peer = null;
+    let connections = [];
+    let isHost = false;
+    let myName = '';
+    let roomCode = '';
+    let players = [];
 
+    // Legge automaticamente se c'è un codice stanza nel link (es. ?room=ABCD)
     window.addEventListener('load', () => {
-      const roomParam = new URLSearchParams(window.location.search).get('room');
-      if (roomParam) document.getElementById('roomCodeInput').value = roomParam;
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('room');
+      if (code) {
+        document.getElementById('roomCodeInput').value = code.toUpperCase();
+      }
     });
 
-    function createLobby() {
+    function getNickname() {
+      return document.getElementById('nicknameInput').value.trim() || 'Chef';
+    }
+
+    // --- CREAZIONE STANZA (HOST) ---
+    function hostGame() {
+      myName = getNickname();
       roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
       isHost = true;
+
+      // Crea un Peer con prefisso univoco basato sul codice stanza
       peer = new Peer('chefshowdown-' + roomCode);
+
       peer.on('open', () => {
-        setupLobby();
-        players.push({ id: peer.id, name: document.getElementById('nicknameInput').value || 'Host' });
-        document.getElementById('startGameBtn').classList.remove('hidden');
+        players = [{ id: peer.id, name: myName + ' (Host)' }];
+        showLobbyUI();
+        document.getElementById('startBtn').classList.remove('hidden');
+        document.getElementById('waitingMsg').classList.add('hidden');
       });
-      peer.on('connection', c => {
-        connections.push(c);
-        c.on('data', d => { if(d.type==='JOIN'){ players.push({id:c.peer, name:d.name}); broadcast({type:'PL', p:players}); updateList(); }});
+
+      peer.on('connection', (conn) => {
+        connections.push(conn);
+
+        conn.on('data', (data) => {
+          if (data.type === 'JOIN') {
+            players.push({ id: conn.peer, name: data.name });
+            updatePlayersList();
+            broadcast({ type: 'UPDATE_LIST', players: players });
+          }
+        });
+
+        conn.on('close', () => {
+          players = players.filter(p => p.id !== conn.peer);
+          updatePlayersList();
+          broadcast({ type: 'UPDATE_LIST', players: players });
+        });
+      });
+
+      peer.on('error', (err) => {
+        alert('Errore di connessione stanza. Riprova.');
       });
     }
 
-    function joinLobby() {
-      roomCode = document.getElementById('roomCodeInput').value.toUpperCase();
+    // --- ACCESSO ALLA STANZA (GUEST) ---
+    function joinGame() {
+      myName = getNickname();
+      roomCode = document.getElementById('roomCodeInput').value.trim().toUpperCase();
+
+      if (!roomCode) {
+        alert('Inserisci prima un codice stanza valido!');
+        return;
+      }
+
       peer = new Peer();
+
       peer.on('open', () => {
-        const c = peer.connect('chefshowdown-' + roomCode);
-        c.on('open', () => {
-          connections.push(c);
-          c.send({ type: 'JOIN', name: document.getElementById('nicknameInput').value || 'Guest' });
-          setupLobby();
+        const hostId = 'chefshowdown-' + roomCode;
+        const conn = peer.connect(hostId);
+
+        conn.on('open', () => {
+          connections.push(conn);
+          conn.send({ type: 'JOIN', name: myName });
+          showLobbyUI();
         });
-        c.on('data', d => {
-          if (d.type === 'PL') { players = d.p; updateList(); }
-          if (d.type === 'START') launchGame();
+
+        conn.on('data', (data) => {
+          if (data.type === 'UPDATE_LIST') {
+            players = data.players;
+            updatePlayersList();
+          } else if (data.type === 'START_GAME') {
+            launchGameScreen();
+          }
+        });
+
+        conn.on('error', () => {
+          alert('Impossibile connettersi. Controlla il codice stanza!');
         });
       });
     }
 
-    function setupLobby() {
+    function showLobbyUI() {
       document.getElementById('menuScreen').classList.add('hidden');
       document.getElementById('lobbyScreen').classList.remove('hidden');
-      document.getElementById('displayRoomCode').innerText = roomCode;
-      document.getElementById('shareLinkInput').value = window.location.origin + window.location.pathname + '?room=' + roomCode;
+      document.getElementById('displayCode').innerText = roomCode;
+
+      const fullLink = window.location.origin + window.location.pathname + '?room=' + roomCode;
+      document.getElementById('shareLink').value = fullLink;
+      updatePlayersList();
     }
 
-    function updateList() {
-      document.getElementById('playerList').innerHTML = players.map(p => '<div>' + p.name + '</div>').join('');
+    function updatePlayersList() {
+      const listEl = document.getElementById('playerList');
+      listEl.innerHTML = players.map(p => `<div style="padding: 4px 0; border-bottom: 1px solid #2c3e50;">🍽️ ${p.name}</div>`).join('');
     }
 
-    function broadcast(d) { connections.forEach(c => c.open && c.send(d)); }
-
-    function startGame() {
-      broadcast({ type: 'START' });
-      launchGame();
+    function broadcast(data) {
+      connections.forEach(conn => {
+        if (conn.open) conn.send(data);
+      });
     }
 
-    function launchGame() {
+    // --- AVVIO DEL GIOCO ---
+    function startTheGame() {
+      if (!isHost) return;
+      broadcast({ type: 'START_GAME' });
+      launchGameScreen();
+    }
+
+    function launchGameScreen() {
       document.getElementById('lobbyScreen').classList.add('hidden');
-      document.getElementById('gameCanvas').style.display = 'block';
+      document.getElementById('gameCanvas').classList.remove('hidden');
       
-      // AVVIA IL TUO GIOCO VERO
-      initGameLogic();
+      // IL TUO GIOCO PARTIRÀ QUI
+      initGame();
     }
 
-    // =========================================================
-    // INCOLLA QUI SOTTO IL CODICE ORIGINALE DEL TUO GIOCO!
-    // =========================================================
-    function initGameLogic() {
-      
-      // 1. Qui incolli le tue variabili (es. player, tasti premuti, mappa)
-      // 2. Qui incolli i tuoi EventListener per la tastiera (frecce, tasto E, ecc.)
-      // 3. Qui incolli la funzione update() e la funzione di ciclo del canvas (requestAnimationFrame)
+    function initGame() {
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
 
+      function gameLoop() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '22px Arial';
+        ctx.fillText('Partita avviata con successo!', 250, 280);
+        ctx.fillText('Giocatori in campo: ' + players.length, 270, 320);
+        requestAnimationFrame(gameLoop);
+      }
+      gameLoop();
     }
   </script>
 </body>
